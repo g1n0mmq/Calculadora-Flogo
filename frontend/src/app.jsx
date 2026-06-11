@@ -1,0 +1,361 @@
+import React, { useState, useEffect } from 'react';
+
+const API_BASE_URL = 'http://localhost:3001/api';
+const DELIVERY_FEE = 550;
+const ADMIN_PASSWORD = "1234";
+
+const App = () => {
+  const [cart, setCart] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [isDelivery, setIsDelivery] = useState(false);
+  const [activeQtyId, setActiveQtyId] = useState(null);
+  const [localQty, setLocalQty] = useState(1);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [formData, setFormData] = useState({ name: '', category: '', price: '' });
+  const [formFile, setFormFile] = useState(null);
+
+  const fetchProducts = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/productos`);
+      if (!response.ok) throw new Error('Error al conectar con el servidor local');
+      const data = await response.json();
+      setProducts(data);
+    } catch (error) {
+      console.error("Error cargando productos locales:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  const handleAdminToggle = () => {
+    if (isAdmin) {
+      setIsAdmin(false);
+      setEditingProduct(null);
+      resetForm();
+    } else {
+      const pass = prompt("Ingrese la clave de administrador:");
+      if (pass === ADMIN_PASSWORD) {
+        setIsAdmin(true);
+      } else {
+        alert("Clave incorrecta.");
+      }
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({ name: '', category: '', price: '' });
+    setFormFile(null);
+    setEditingProduct(null);
+    const fileInput = document.getElementById('image-input');
+    if (fileInput) fileInput.value = '';
+  };
+
+  const handleSaveProduct = async (e) => {
+    e.preventDefault();
+    if (!formData.name || !formData.price || !formData.category) {
+      alert("Por favor complete los campos obligatorios.");
+      return;
+    }
+
+    const data = new FormData();
+    data.append('name', formData.name);
+    data.append('category', formData.category);
+    data.append('price', formData.price);
+    if (formFile) {
+      data.append('image', formFile);
+    }
+
+    try {
+      let response;
+      if (editingProduct) {
+        response = await fetch(`${API_BASE_URL}/admin/productos/${editingProduct.id}`, {
+          method: 'PUT',
+          body: data
+        });
+      } else {
+        response = await fetch(`${API_BASE_URL}/admin/productos`, {
+          method: 'POST',
+          body: data
+        });
+      }
+
+      if (!response.ok) throw new Error('Error al guardar el producto');
+      alert("Producto guardado correctamente.");
+      resetForm();
+      fetchProducts();
+    } catch (error) {
+      console.error(error);
+      alert("Error al guardar cambios en el catálogo.");
+    }
+  };
+
+  const handleEditClick = (product) => {
+    setEditingProduct(product);
+    setFormData({ name: product.name, category: product.category, price: product.price });
+  };
+
+  const handleDeleteProduct = async (id) => {
+    if (!confirm("¿Está seguro de que desea eliminar este producto?")) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/productos/${id}`, {
+        method: 'DELETE'
+      });
+      if (!response.ok) throw new Error('Error al eliminar');
+      fetchProducts();
+    } catch (error) {
+      alert("No se pudo eliminar el producto.");
+    }
+  };
+
+  const addToCart = (product, qty) => {
+    const existingIndex = cart.findIndex(item => item.id === product.id);
+    if (existingIndex > -1) {
+      const newCart = [...cart];
+      newCart[existingIndex].quantity += qty;
+      setCart(newCart);
+    } else {
+      setCart([...cart, { ...product, quantity: qty }]);
+    }
+    setActiveQtyId(null);
+    setLocalQty(1);
+  };
+
+  const updateCartQty = (id, delta) => {
+    setCart(prev => prev.map(item => 
+      item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item
+    ).filter(item => item.quantity > 0));
+  };
+
+  const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const total = subtotal + (isDelivery ? DELIVERY_FEE : 0);
+
+  const handleCheckout = async () => {
+    if (cart.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/ventas`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          items: cart,
+          subtotal,
+          delivery: isDelivery ? DELIVERY_FEE : 0,
+          total
+        })
+      });
+
+      if (!response.ok) throw new Error('Error al procesar la venta');
+      
+      setCart([]);
+      setIsDelivery(false);
+      alert("Pedido registrado con éxito de forma local.");
+    } catch (error) {
+      alert("Error al procesar la venta.");
+      console.error(error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-900">
+      <header className="bg-white border-b sticky top-0 z-40 px-8 py-4 flex justify-between items-center shadow-sm">
+        <h1 className="text-xl font-black tracking-tighter text-amber-600">PANADERÍA LOCAL</h1>
+        <button 
+          onClick={handleAdminToggle}
+          className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border transition-colors ${isAdmin ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-slate-900 text-white hover:bg-black'}`}
+        >
+          {isAdmin ? "Salir Admin" : "Modo Admin"}
+        </button>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto p-6 flex flex-col gap-6">
+        {isAdmin && (
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+            <h2 className="text-lg font-black mb-4 text-slate-800 uppercase tracking-tight">
+              {editingProduct ? `⚙️ Editando: ${editingProduct.name}` : "➕ Añadir Nuevo Producto"}
+            </h2>
+            <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Nombre</label>
+                <input 
+                  type="text" 
+                  value={formData.name} 
+                  onChange={e => setFormData({...formData, name: e.target.value})} 
+                  className="w-full p-3 bg-slate-50 border rounded-xl font-medium focus:outline-amber-500" 
+                  placeholder="Ej. Pan Negro"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Categoría</label>
+                <input 
+                  type="text" 
+                  value={formData.category} 
+                  onChange={e => setFormData({...formData, category: e.target.value})} 
+                  className="w-full p-3 bg-slate-50 border rounded-xl font-medium focus:outline-amber-500" 
+                  placeholder="Ej. Panadería"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Precio ($)</label>
+                <input 
+                  type="number" 
+                  value={formData.price} 
+                  onChange={e => setFormData({...formData, price: e.target.value})} 
+                  className="w-full p-3 bg-slate-50 border rounded-xl font-medium focus:outline-amber-500" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Imagen Local</label>
+                <input 
+                  id="image-input"
+                  type="file" 
+                  accept="image/*"
+                  onChange={e => setFormFile(e.target.files[0])} 
+                  className="w-full text-xs text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 cursor-pointer"
+                />
+              </div>
+              <div className="md:col-span-4 flex justify-end gap-2 pt-2">
+                {editingProduct && (
+                  <button type="button" onClick={resetForm} className="px-5 py-3 text-sm font-bold text-slate-500 hover:text-slate-700">
+                    Cancelar
+                  </button>
+                )}
+                <button type="submit" className="px-6 py-3 bg-amber-600 text-white font-bold rounded-xl text-sm hover:bg-amber-700 transition-colors">
+                  {editingProduct ? "Guardar Cambios" : "Insertar Producto"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {products.map(product => (
+                <div key={product.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all relative">
+                  <img src={product.image || 'https://via.placeholder.com/400x300?text=Sin+Imagen'} alt={product.name} className="h-48 w-full object-cover" />
+                  <div className="p-5">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">{product.category}</div>
+                        <h3 className="text-lg font-bold truncate max-w-[180px]">{product.name}</h3>
+                        <p className="text-slate-500 font-bold mb-4">${product.price.toLocaleString()}</p>
+                      </div>
+                      {isAdmin && (
+                        <div className="flex gap-1 bg-slate-50 p-1 rounded-xl border">
+                          <button onClick={() => handleEditClick(product)} className="p-2 text-sm hover:bg-white rounded-lg">⚙️</button>
+                          <button onClick={() => handleDeleteProduct(product.id)} className="p-2 text-sm text-red-500 hover:bg-white rounded-lg">🗑️</button>
+                        </div>
+                      )}
+                    </div>
+                    <button 
+                      onClick={() => { setActiveQtyId(product.id); setLocalQty(1); }}
+                      className="w-full py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-black transition-colors"
+                    >
+                      Seleccionar
+                    </button>
+                  </div>
+
+                  {activeQtyId === product.id && (
+                    <div className="absolute inset-0 bg-white/95 backdrop-blur-sm p-6 flex flex-col justify-center items-center">
+                      <p className="text-xs font-black uppercase text-slate-400 mb-4">Cantidad</p>
+                      <div className="flex items-center gap-6 mb-6">
+                        <button onClick={() => setLocalQty(Math.max(1, localQty - 1))} className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl font-bold">-</button>
+                        <span className="text-3xl font-black">{localQty}</span>
+                        <button onClick={() => setLocalQty(localQty + 1)} className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl font-bold">+</button>
+                      </div>
+                      <div className="flex gap-2 w-full">
+                        <button onClick={() => setActiveQtyId(null)} className="flex-1 py-3 text-slate-500 font-bold">Cancelar</button>
+                        <button onClick={() => addToCart(product, localQty)} className="flex-[2] py-3 bg-amber-600 text-white rounded-xl font-bold">Confirmar</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-4">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xl flex flex-col h-[calc(100vh-140px)] sticky top-28">
+              <div className="p-6 border-b flex justify-between items-center">
+                <h2 className="font-black text-lg">Resumen de Venta</h2>
+                <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold">{cart.length} ITEMS</span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {cart.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-slate-300 italic text-sm">El carrito está vacío</div>
+                ) : (
+                  cart.map(item => (
+                    <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-bold truncate">{item.name}</h4>
+                        <p className="text-[10px] font-bold text-slate-400">${item.price} x {item.quantity}</p>
+                      </div>
+                      <div className="flex items-center bg-white rounded-lg border">
+                        <button onClick={() => updateCartQty(item.id, -1)} className="w-7 h-7 font-bold text-slate-400">-</button>
+                        <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
+                        <button onClick={() => updateCartQty(item.id, 1)} className="w-7 h-7 font-bold text-slate-400">+</button>
+                      </div>
+                      <div className="text-right font-black text-sm w-20">
+                        ${(item.price * item.quantity).toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="p-6 bg-slate-50 border-t rounded-b-3xl space-y-4">
+                <div className="flex justify-between text-sm font-bold text-slate-500">
+                  <span>Subtotal</span>
+                  <span>${subtotal.toLocaleString()}</span>
+                </div>
+                
+                <div className="flex items-center justify-between py-3 border-y border-slate-200">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isDelivery} 
+                      onChange={(e) => setIsDelivery(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-sm font-bold text-slate-700">Envío a domicilio</span>
+                  </label>
+                  <span className={`text-sm font-black ${isDelivery ? 'text-amber-600' : 'text-slate-300'}`}>
+                    ${isDelivery ? DELIVERY_FEE : 0}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="font-black text-slate-500">TOTAL</span>
+                  <span className="text-3xl font-black text-amber-600 tracking-tighter">
+                    ${total.toLocaleString()}
+                  </span>
+                </div>
+
+                <button 
+                  onClick={handleCheckout}
+                  disabled={cart.length === 0 || isProcessing}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all shadow-lg"
+                >
+                  {isProcessing ? 'Procesando...' : 'Finalizar Venta'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;

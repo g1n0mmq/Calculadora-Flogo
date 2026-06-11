@@ -1,0 +1,16 @@
+# Dependencias (Excluye node_modules en backend y frontend)
+**/node_modules/
+
+# Archivos de producción / Compilación
+**/dist/
+**/.cache/
+
+# Variables de entorno y configuraciones locales de VS Code
+.env
+.env.local
+.env.*.local
+**/.vscode/
+
+# Registros de error y logs
+*.log
+npm-debug.log*

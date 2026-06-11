@@ -1,0 +1,351 @@
+﻿==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\backend\server.js
+==================================================
+const express = require('express');
+const cors = require('cors');
+const sqlite3 = require('sqlite3').verbose();
+
+const app = express();
+const PORT = 3001;
+
+// Middlewares
+app.use(cors());
+app.use(express.json());
+
+// ConexiÃ³n y configuraciÃ³n de la base de datos SQLite
+const db = new sqlite3.Database('./panaderia.db', (err) => {
+  if (err) {
+    console.error('Error abriendo la base de datos', err);
+  } else {
+    console.log('Base de datos SQLite conectada correctamente.');
+    
+    db.serialize(() => {
+      // Crear tablas necesarias
+      db.run(`CREATE TABLE IF NOT EXISTS productos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT, category TEXT, price REAL, image TEXT
+      )`);
+      db.run(`CREATE TABLE IF NOT EXISTS ventas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subtotal REAL, delivery REAL, total REAL,
+        fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+      db.run(`CREATE TABLE IF NOT EXISTS ventas_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        venta_id INTEGER, producto_id INTEGER, quantity INTEGER, price REAL,
+        FOREIGN KEY(venta_id) REFERENCES ventas(id)
+      )`);
+
+      // Seed: Insertar productos de prueba si la tabla estÃ¡ vacÃ­a
+      db.get("SELECT COUNT(*) AS count FROM productos", (err, row) => {
+        if (row.count === 0) {
+          const stmt = db.prepare("INSERT INTO productos (name, category, price, image) VALUES (?, ?, ?, ?)");
+          stmt.run("Pan FrancÃ©s (Kilo)", "PanaderÃ­a", 1500, "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&q=80");
+          stmt.run("Medialunas de Manteca (Docena)", "Facturas", 3500, "https://images.unsplash.com/photo-1549931319-a545dcf3bc73?w=500&q=80");
+          stmt.run("Torta de Chocolate", "PastelerÃ­a", 8500, "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=500&q=80");
+          stmt.run("SÃ¡ndwich de Miga (Docena)", "Salados", 6000, "https://images.unsplash.com/photo-1619096252214-ef06c45683e3?w=500&q=80");
+          stmt.finalize();
+        }
+      });
+    });
+  }
+});
+
+// Endpoint 1: Obtener el catÃ¡logo de productos
+app.get('/api/productos', (req, res) => {
+  db.all("SELECT * FROM productos", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// Endpoint 2: Registrar una venta
+app.post('/api/ventas', (req, res) => {
+  const { items, subtotal, delivery, total } = req.body;
+
+  db.run("INSERT INTO ventas (subtotal, delivery, total) VALUES (?, ?, ?)", [subtotal, delivery, total], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const ventaId = this.lastID;
+    const stmt = db.prepare("INSERT INTO ventas_items (venta_id, producto_id, quantity, price) VALUES (?, ?, ?, ?)");
+    
+    items.forEach(item => stmt.run(ventaId, item.id, item.quantity, item.price));
+    stmt.finalize();
+    
+    res.status(201).json({ message: "Venta guardada con Ã©xito", ventaId });
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor backend corriendo en http://localhost:${PORT}`);
+});
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\src\app.jsx
+==================================================
+import React, { useState, useEffect } from 'react';
+
+const API_BASE_URL = 'http://localhost:3001/api';
+const DELIVERY_FEE = 550;
+
+const App = () => {
+  const [cart, setCart] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [isDelivery, setIsDelivery] = useState(false);
+  const [activeQtyId, setActiveQtyId] = useState(null);
+  const [localQty, setLocalQty] = useState(1);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Obtener los productos desde el backend local al cargar la pÃ¡gina
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/productos`);
+        if (!response.ok) throw new Error('Error al conectar con el servidor local');
+        const data = await response.json();
+        setProducts(data);
+      } catch (error) {
+        console.error("Error cargando productos locales:", error);
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  const addToCart = (product, qty) => {
+    const existingIndex = cart.findIndex(item => item.id === product.id);
+    if (existingIndex > -1) {
+      const newCart = [...cart];
+      newCart[existingIndex].quantity += qty;
+      setCart(newCart);
+    } else {
+      setCart([...cart, { ...product, quantity: qty }]);
+    }
+    setActiveQtyId(null);
+    setLocalQty(1);
+  };
+
+  const updateCartQty = (id, delta) => {
+    setCart(prev => prev.map(item => 
+      item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item
+    ).filter(item => item.quantity > 0));
+  };
+
+  const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const total = subtotal + (isDelivery ? DELIVERY_FEE : 0);
+
+  const handleCheckout = async () => {
+    if (cart.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/ventas`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          items: cart,
+          subtotal,
+          delivery: isDelivery ? DELIVERY_FEE : 0,
+          total
+        })
+      });
+
+      if (!response.ok) throw new Error('Error al procesar la venta en el servidor');
+      
+      setCart([]);
+      setIsDelivery(false);
+      alert("Pedido registrado con Ã©xito en la base de datos SQLite local.");
+    } catch (error) {
+      alert("Error al procesar la venta localmente.");
+      console.error(error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-900">
+      {/* Cabecera */}
+      <header className="bg-white border-b sticky top-0 z-40 px-8 py-4 flex justify-between items-center shadow-sm">
+        <h1 className="text-xl font-black tracking-tighter text-amber-600">PANADERÃA LOCAL</h1>
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Consola de Venta</div>
+      </header>
+
+      {/* Contenedor Principal */}
+      <main className="max-w-[1600px] mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* CatÃ¡logo de Productos (CuadrÃ­cula de 3 columnas en pantallas grandes) */}
+        <div className="lg:col-span-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {products.map(product => (
+              <div key={product.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-all relative">
+                <img src={product.image} alt={product.name} className="h-48 w-full object-cover" />
+                <div className="p-5">
+                  <div className="text-[10px] font-bold text-amber-600 uppercase mb-1">{product.category}</div>
+                  <h3 className="text-lg font-bold truncate">{product.name}</h3>
+                  <p className="text-slate-500 font-bold mb-4">${product.price.toLocaleString()}</p>
+                  
+                  <button 
+                    onClick={() => { setActiveQtyId(product.id); setLocalQty(1); }}
+                    className="w-full py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-black transition-colors"
+                  >
+                    Seleccionar
+                  </button>
+                </div>
+
+                {/* Selector de Cantidad Desplegable interno */}
+                {activeQtyId === product.id && (
+                  <div className="absolute inset-0 bg-white/95 backdrop-blur-sm p-6 flex flex-col justify-center items-center">
+                    <p className="text-xs font-black uppercase text-slate-400 mb-4">Cantidad</p>
+                    <div className="flex items-center gap-6 mb-6">
+                      <button onClick={() => setLocalQty(Math.max(1, localQty - 1))} className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl font-bold">-</button>
+                      <span className="text-3xl font-black">{localQty}</span>
+                      <button onClick={() => setLocalQty(localQty + 1)} className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl font-bold">+</button>
+                    </div>
+                    <div className="flex gap-2 w-full">
+                      <button onClick={() => setActiveQtyId(null)} className="flex-1 py-3 text-slate-500 font-bold">Cancelar</button>
+                      <button onClick={() => addToCart(product, localQty)} className="flex-[2] py-3 bg-amber-600 text-white rounded-xl font-bold">Confirmar</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Detalle de Pedido Lateral */}
+        <div className="lg:col-span-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-xl flex flex-col h-[calc(100vh-140px)] sticky top-28">
+            <div className="p-6 border-b flex justify-between items-center">
+              <h2 className="font-black text-lg">Resumen de Venta</h2>
+              <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold">{cart.length} ITEMS</span>
+            </div>
+
+            {/* Listado de Ã­tems agregados */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {cart.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-slate-300 italic text-sm">El carrito estÃ¡ vacÃ­o</div>
+              ) : (
+                cart.map(item => (
+                  <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold truncate">{item.name}</h4>
+                      <p className="text-[10px] font-bold text-slate-400">${item.price} x {item.quantity}</p>
+                    </div>
+                    <div className="flex items-center bg-white rounded-lg border">
+                      <button onClick={() => updateCartQty(item.id, -1)} className="w-7 h-7 font-bold text-slate-400">-</button>
+                      <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
+                      <button onClick={() => updateCartQty(item.id, 1)} className="w-7 h-7 font-bold text-slate-400">+</button>
+                    </div>
+                    <div className="text-right font-black text-sm w-20">
+                      ${(item.price * item.quantity).toLocaleString()}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Costos e InserciÃ³n */}
+            <div className="p-6 bg-slate-50 border-t rounded-b-3xl space-y-4">
+              <div className="flex justify-between text-sm font-bold text-slate-500">
+                <span>Subtotal</span>
+                <span>${subtotal.toLocaleString()}</span>
+              </div>
+              
+              <div className="flex items-center justify-between py-3 border-y border-slate-200">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={isDelivery} 
+                    onChange={(e) => setIsDelivery(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-sm font-bold text-slate-700">EnvÃ­o a domicilio</span>
+                </label>
+                <span className={`text-sm font-black ${isDelivery ? 'text-amber-600' : 'text-slate-300'}`}>
+                  ${isDelivery ? DELIVERY_FEE : 0}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <span className="font-black text-slate-500">TOTAL</span>
+                <span className="text-3xl font-black text-amber-600 tracking-tighter">
+                  ${total.toLocaleString()}
+                </span>
+              </div>
+
+              <button 
+                onClick={handleCheckout}
+                disabled={cart.length === 0 || isProcessing}
+                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all shadow-lg"
+              >
+                {isProcessing ? 'Procesando...' : 'Finalizar Venta'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\src\index.css
+==================================================
+@import "tailwindcss";
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\src\Main.jsx
+==================================================
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './app.jsx'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\postcss.config.js
+==================================================
+export default {
+  // VacÃ­o intencionalmente para que Vite use el plugin nativo de Tailwind
+  plugins: {},
+}
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\tailwind.config.js
+==================================================
+
+
+
+==================================================
+ARCHIVO: C:\Users\GINO MURUA\Desktop\FLOGO-CALCULADORA\frontend\vite.config.js
+==================================================
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [tailwindcss(), react()],
+})
+
+
+
