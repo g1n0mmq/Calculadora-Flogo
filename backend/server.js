@@ -25,11 +25,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
+// Usamos tu base de datos v5 donde tienes todo guardado
 const dbPath = path.resolve(__dirname, 'panaderia_v5.db');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) console.error('Error abriendo la base de datos', err);
   else {
-    console.log('Base de datos conectada correctamente.');
+    console.log('Base de datos SQLite conectada correctamente.');
     inicializarTablas();
   }
 });
@@ -58,7 +59,9 @@ function inicializarTablas() {
   });
 }
 
-// Endpoints Públicos
+// =======================
+// ENDPOINTS PÚBLICOS
+// =======================
 app.get('/api/productos', (req, res) => {
   db.all("SELECT * FROM productos", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -106,7 +109,9 @@ app.post('/api/ventas', (req, res) => {
   });
 });
 
-// Endpoints Admin
+// =======================
+// ENDPOINTS ADMIN
+// =======================
 app.post('/api/admin/productos', upload.single('image'), (req, res) => {
   const { cod_producto, name, category, price_particular, price_caf_rest, price_negocio, price_gimnasio } = req.body;
   const imageUrl = req.file ? `http://localhost:3001/uploads/${req.file.filename}` : '';
@@ -166,6 +171,20 @@ app.delete('/api/admin/promos/:id', (req, res) => {
     db.run("DELETE FROM promociones WHERE id = ?", [req.params.id], err => {
       if (err) return res.status(500).json({error: err.message});
       res.json({ message: "Promo eliminada." });
+    });
+  });
+});
+
+// ==== RUTA SOLUCIONADA PARA ELIMINAR LOS TICKETS ====
+app.delete('/api/admin/ventas/:id', (req, res) => {
+  const { id } = req.params;
+  // Primero borramos los items del ticket
+  db.run("DELETE FROM ventas_items WHERE venta_id = ?", [id], function(err) {
+    if (err) return res.status(500).json({error: err.message});
+    // Luego borramos el ticket en sí
+    db.run("DELETE FROM ventas WHERE id = ?", [id], function(err) {
+      if (err) return res.status(500).json({error: err.message});
+      res.json({ message: "Venta eliminada." });
     });
   });
 });
