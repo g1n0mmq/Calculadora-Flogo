@@ -131,46 +131,40 @@ const App = () => {
   let finalTotal = subtotalAfterPromos - manualDiscountAmount + deliveryAmount;
   if (isDiscount && isRounded) finalTotal = Math.round(finalTotal / 500) * 500;
 
-  // Generador de Ticket para WhatsApp
-  const handleCopyTicket = () => {
-    if (cart.length === 0) return;
-
-    let text = "*TU PEDIDO*\n";
+  // Nueva función unificada para generar el texto del ticket
+  const generateTicketText = (data) => {
+    let text = `*TU PEDIDO*\n`;
     
-    // Listado de Productos
-    cart.forEach(item => {
-      const itemTotal = getPriceByClient(item) * item.quantity;
-      text += `- ${item.quantity} ${item.name.toUpperCase()} = *$${itemTotal.toLocaleString('es-AR')}*\n`;
+    // Lista de ítems (funciona tanto para cart como para historial)
+    data.items.forEach(item => {
+      // Si viene de 'ventasHistory', el precio ya es el total por fila
+      const linePrice = data.isHistory ? item.price * item.quantity : getPriceByClient(item) * item.quantity;
+      text += `- ${item.quantity} ${item.name.toUpperCase()} = *$${linePrice.toLocaleString('es-AR')}*\n`;
     });
 
     // Descuentos de Promo
-    if (appliedPromosList.length > 0) {
-      appliedPromosList.forEach(promo => {
-        text += `   🔸 DESCUENTO PROMO ${promo.description.toUpperCase()} = -*$${promo.discount.toLocaleString('es-AR')}*\n`;
-      });
+    if (data.promo_discount > 0) {
+      text += `   🔸 AHORRO COMBOS = -*$${data.promo_discount.toLocaleString('es-AR')}*\n`;
     }
 
     // Costo de Envío
-    if (deliveryAmount > 0) {
-      text += `- Costo de envío a su dirección = *$${deliveryAmount.toLocaleString('es-AR')}*\n`;
+    if (data.delivery > 0) {
+      text += `- Costo de envío = *$${data.delivery.toLocaleString('es-AR')}*\n`;
     }
 
     // Descuento Manual
-    if (manualDiscountAmount > 0) {
-      text += `- Descuentos adicionales = *${discountPercent}%*\n`;
-      text += `   🔸 descuento de -*$${manualDiscountAmount.toLocaleString('es-AR')}*\n`;
+    if (data.discount > 0) {
+      text += `- Descuentos adicionales = -*$${data.discount.toLocaleString('es-AR')}*\n`;
     }
 
-    // Totales Finales
-    text += `\nSUBTOTAL SIN DESCUENTOS = *$${rawSubtotal.toLocaleString('es-AR')}*\n`;
-    text += `*TOTAL = $${finalTotal.toLocaleString('es-AR')}*\n`;
+    // LÓGICA DE CORRECCIÓN: Solo muestra subtotal si hubo descuentos
+    const hasDiscounts = data.promo_discount > 0 || data.discount > 0;
+    if (hasDiscounts) {
+      text += `\nSUBTOTAL SIN DESCUENTOS = *$${data.subtotal.toLocaleString('es-AR')}*\n`;
+    }
 
-    navigator.clipboard.writeText(text).then(() => {
-      alert("Pedido copiado al portapapeles para WhatsApp.");
-    }).catch(err => {
-      console.error("Error al copiar: ", err);
-      alert("No se pudo copiar el pedido.");
-    });
+    text += `*TOTAL = $${data.total.toLocaleString('es-AR')}*\n`;
+    return text;
   };
 
   const handleCheckout = async () => {
@@ -263,23 +257,23 @@ const App = () => {
     fetchData();
   };
 
-  // Nuevas funciones agregadas:
+  // Botón del carrito (Ticket Activo)
+  const handleCopyTicket = () => {
+    const data = {
+      items: cart,
+      subtotal: rawSubtotal,
+      delivery: deliveryAmount,
+      promo_discount: totalPromoDiscount,
+      discount: manualDiscountAmount,
+      total: finalTotal,
+      isHistory: false
+    };
+    navigator.clipboard.writeText(generateTicketText(data)).then(() => alert("Copiado!"));
+  };
   const handleDeleteVenta = async (id) => {
     if (!window.confirm("¿Eliminar registro de venta permanentemente?")) return;
     await fetch(`${API_BASE_URL}/admin/ventas/${id}`, { method: 'DELETE' });
     fetchData();
-  };
-  
-  const generateTicketText = (venta) => {
-    let text = `*TU PEDIDO #${venta.id}*\n`;
-    venta.items.forEach(item => {
-      text += `- ${item.quantity} ${item.name.toUpperCase()} = *$${(item.price * item.quantity).toLocaleString('es-AR')}*\n`;
-    });
-    if (venta.promo_discount > 0) text += `   🔸 AHORRO COMBOS = -*$${venta.promo_discount.toLocaleString('es-AR')}*\n`;
-    if (venta.delivery > 0) text += `- Envío = *$${venta.delivery.toLocaleString('es-AR')}*\n`;
-    if (venta.discount > 0) text += `- Desc. Manual = -*$${venta.discount.toLocaleString('es-AR')}*\n`;
-    text += `\nTOTAL = *$${venta.total.toLocaleString('es-AR')}*\n`;
-    return text;
   };
 
   return (
@@ -542,7 +536,14 @@ const App = () => {
                           <div className="flex justify-between items-baseline mb-1">
                             <span className="text-xl font-black text-slate-800">${venta.total.toLocaleString('es-AR')}</span>
                             <div className="flex gap-2">
-                               <button onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(generateTicketText(venta)); alert("Copiado!"); }} className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200">COPIAR</button>
+                               <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  const data = { ...venta, isHistory: true }; // Prepara los datos del historial
+                                  navigator.clipboard.writeText(generateTicketText(data)); 
+                                  alert("Copiado!"); 
+                                }} 
+                                className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-bold hover:bg-green-200">COPIAR</button>
                                {isAdmin && <button onClick={(e) => { e.stopPropagation(); handleDeleteVenta(venta.id); }} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded font-bold hover:bg-red-200">ELIMINAR</button>}
                             </div>
                           </div>
