@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = 'https://xt30hvlv-3001.brs.devtunnels.ms/api';
 const ADMIN_PASSWORD = "1234";
 
 const App = () => {
@@ -13,6 +13,7 @@ const App = () => {
   const [sideTab, setSideTab] = useState('ticket'); 
   const [adminTab, setAdminTab] = useState('productos'); 
   const [expandedVentaId, setExpandedVentaId] = useState(null);
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false); // Nuevo estado móvil
   
   const [isDelivery, setIsDelivery] = useState(false);
   const [deliveryFee, setDeliveryFee] = useState(0);
@@ -82,7 +83,7 @@ const App = () => {
   let tempCart = cart.map(item => ({ ...item })); 
   let totalPromoDiscount = 0;
   let promoProductIds = new Set(); 
-  let appliedPromosList = []; // Almacena las promos aplicadas para el ticket de WhatsApp
+  let appliedPromosList = [];
 
   promos.forEach(promo => {
     let maxApplies = Infinity;
@@ -131,33 +132,26 @@ const App = () => {
   let finalTotal = subtotalAfterPromos - manualDiscountAmount + deliveryAmount;
   if (isDiscount && isRounded) finalTotal = Math.round(finalTotal / 500) * 500;
 
-  // Nueva función unificada para generar el texto del ticket
   const generateTicketText = (data) => {
     let text = `*TU PEDIDO*\n`;
     
-    // Lista de ítems (funciona tanto para cart como para historial)
     data.items.forEach(item => {
-      // Si viene de 'ventasHistory', el precio ya es el total por fila
       const linePrice = data.isHistory ? item.price * item.quantity : getPriceByClient(item) * item.quantity;
       text += `- ${item.quantity} ${item.name.toUpperCase()} = *$${linePrice.toLocaleString('es-AR')}*\n`;
     });
 
-    // Descuentos de Promo
     if (data.promo_discount > 0) {
       text += `   🔸 AHORRO COMBOS = -*$${data.promo_discount.toLocaleString('es-AR')}*\n`;
     }
 
-    // Costo de Envío
     if (data.delivery > 0) {
       text += `- Costo de envío = *$${data.delivery.toLocaleString('es-AR')}*\n`;
     }
 
-    // Descuento Manual
     if (data.discount > 0) {
       text += `- Descuentos adicionales = -*$${data.discount.toLocaleString('es-AR')}*\n`;
     }
 
-    // LÓGICA DE CORRECCIÓN: Solo muestra subtotal si hubo descuentos
     const hasDiscounts = data.promo_discount > 0 || data.discount > 0;
     if (hasDiscounts) {
       text += `\nSUBTOTAL SIN DESCUENTOS = *$${data.subtotal.toLocaleString('es-AR')}*\n`;
@@ -188,6 +182,7 @@ const App = () => {
       clearCart();
       setIsDelivery(false); setDeliveryFee(0);
       setIsDiscount(false); setDiscountPercent(0); setIsRounded(false);
+      setIsMobileCartOpen(false); // Cierra el ticket en móvil al cobrar
       
       await fetchData();
       setSideTab('historial');
@@ -257,7 +252,6 @@ const App = () => {
     fetchData();
   };
 
-  // Botón del carrito (Ticket Activo)
   const handleCopyTicket = () => {
     const data = {
       items: cart,
@@ -270,6 +264,7 @@ const App = () => {
     };
     navigator.clipboard.writeText(generateTicketText(data)).then(() => alert("Copiado!"));
   };
+
   const handleDeleteVenta = async (id) => {
     if (!window.confirm("¿Eliminar registro de venta permanentemente?")) return;
     await fetch(`${API_BASE_URL}/admin/ventas/${id}`, { method: 'DELETE' });
@@ -280,7 +275,7 @@ const App = () => {
     <div className="fixed inset-0 bg-slate-50 font-sans text-slate-900 flex flex-col">
       <header className="flex-none bg-white border-b z-40 px-6 py-4 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-6">
-          <h1 className="text-xl font-black tracking-tighter text-amber-600 uppercase">Terminal POS</h1>
+          <h1 className="text-xl font-black tracking-tighter text-amber-600 uppercase">CALCULADORA DE PRECIOS</h1>
           {!isAdmin && (
             <select value={clientType} onChange={(e) => setClientType(e.target.value)} className="bg-slate-100 border border-slate-200 text-sm font-bold text-slate-700 py-2 px-4 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none">
               <option value="particular">Tarifa: Particular</option>
@@ -294,10 +289,11 @@ const App = () => {
           {isAdmin ? "Cerrar Panel Admin" : "⚙️ Ajustes Admin"}
         </button>
       </header>
-
-      <main className="flex-1 flex overflow-hidden max-w-[1800px] w-full mx-auto p-4 gap-6">
+      
+      <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden max-w-[1800px] w-full mx-auto p-4 gap-6">
         
-        <section className="flex-[2] flex flex-col overflow-hidden min-w-0">
+        {/* Modificación: Se añade pb-24 lg:pb-0 para evitar superposición con el botón en móviles */}
+        <section className="flex-[2] flex flex-col overflow-hidden min-w-0 pb-24 lg:pb-0">
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
             
             {isAdmin ? (
@@ -406,7 +402,8 @@ const App = () => {
                     className="bg-white rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 transition-all border border-slate-200 overflow-hidden cursor-pointer flex flex-col group active:scale-95"
                   >
                     <div className="relative h-28 w-full overflow-hidden bg-slate-100 shrink-0">
-                      <img src={p.image || 'https://via.placeholder.com/200?text=Panadería'} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    
+                      <img src={p.image ? p.image.replace('http://localhost:3001', API_BASE_URL.replace('/api', '')) : 'https://via.placeholder.com/200?text=Panadería'} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                     </div>
                     <div className="p-3 flex-1 flex flex-col justify-between">
                       <div>
@@ -424,9 +421,17 @@ const App = () => {
           </div>
         </section>
 
-        <aside className="w-full max-w-sm lg:max-w-md flex flex-col overflow-hidden min-w-0">
-          <div className="bg-white rounded-3xl shadow-xl border border-slate-200 flex flex-col flex-1 min-h-0 overflow-hidden">
+        {/* Modificación: Panel modal para móviles */}
+        <aside className={`
+          ${isMobileCartOpen ? 'fixed inset-0 z-50 p-4 bg-slate-50 flex' : 'hidden'} 
+          lg:static lg:flex w-full lg:max-w-sm lg:max-w-md flex-col overflow-hidden min-w-0
+        `}>
+          <div className="bg-white rounded-3xl shadow-2xl lg:shadow-xl border border-slate-200 flex flex-col flex-1 min-h-0 overflow-hidden">
             
+            <button onClick={() => setIsMobileCartOpen(false)} className="lg:hidden w-full bg-slate-100 border-b border-slate-200 text-slate-700 p-4 font-black text-sm uppercase active:bg-slate-200 shrink-0">
+              ↓ Seguir agregando productos ↓
+            </button>
+
             <div className="flex shrink-0 border-b border-slate-200 bg-slate-50">
               <button onClick={() => setSideTab('ticket')} className={`flex-1 py-4 font-black text-sm uppercase transition-colors relative ${sideTab === 'ticket' ? 'text-amber-600 bg-white' : 'text-slate-400 hover:bg-slate-100'}`}>
                 Ticket Activo
@@ -503,7 +508,6 @@ const App = () => {
                       <span className="text-4xl font-black text-amber-600 tracking-tighter">${finalTotal.toLocaleString('es-AR')}</span>
                     </div>
 
-                    {/* BOTÓN NUEVO: COPIAR PARA WHATSAPP */}
                     <button 
                       onClick={handleCopyTicket} 
                       disabled={cart.length === 0} 
@@ -539,7 +543,7 @@ const App = () => {
                                <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
-                                  const data = { ...venta, isHistory: true }; // Prepara los datos del historial
+                                  const data = { ...venta, isHistory: true };
                                   navigator.clipboard.writeText(generateTicketText(data)); 
                                   alert("Copiado!"); 
                                 }} 
@@ -578,6 +582,20 @@ const App = () => {
             </div>
           </div>
         </aside>
+
+        {/* BOTÓN FLOTANTE MÓVIL */}
+        {!isMobileCartOpen && (
+          <button 
+            onClick={() => setIsMobileCartOpen(true)}
+            className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-slate-900 text-white p-4 rounded-2xl shadow-[0_10px_25px_rgba(0,0,0,0.3)] font-black flex justify-between items-center border border-slate-700 active:scale-95 transition-transform"
+          >
+            <div className="flex items-center gap-3">
+              <span className="bg-amber-600 text-white px-3 py-1 rounded-lg text-sm">{cart.reduce((a,c)=>a+c.quantity,0)}</span>
+              <span className="uppercase tracking-wider">Ver Ticket</span>
+            </div>
+            <span className="text-amber-500 text-xl">${finalTotal.toLocaleString('es-AR')}</span>
+          </button>
+        )}
       </main>
     </div>
   );
